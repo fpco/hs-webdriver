@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts, OverloadedStrings, DeriveDataTypeable #-}
 module Test.WebDriver.Internal
-       ( mkWDUri, mkRequest
+       ( mkWDUri, mkRequest, sendHTTPRequest
        , handleHTTPErr, handleJSONErr, handleHTTPResp
        , WDResponse(..)
 
@@ -24,6 +24,7 @@ import Data.Text as T (Text, unpack, splitOn, null)
 import Data.ByteString.Lazy.Char8 (ByteString)
 import Data.ByteString.Lazy.Char8 as LBS (length, unpack, null)
 import qualified Data.ByteString.Base64.Lazy as B64
+import qualified Data.Text.Lazy.Encoding as TL
 
 import Control.Monad.Base
 import Control.Exception.Lifted (throwIO)
@@ -36,6 +37,7 @@ import Data.Maybe (fromMaybe)
 import Data.String (fromString)
 import Data.Word (Word, Word8)
 
+-- |Take a URL path and construct a full URL using the current session state
 mkWDUri :: (SessionState s) => String -> s URI
 mkWDUri wdPath = do 
   WDSession{wdHost = host, 
@@ -51,24 +53,30 @@ mkWDUri wdPath = do
     (_, Nothing) -> throwIO $ InvalidURL relPath
     (Just baseURI, Just relURI) -> return $ relURI `relativeTo` baseURI
 
+-- |Constructs a 'Request' value when given a list of headers, HTTP request method, and URL path
 mkRequest :: (SessionState s, ToJSON a) =>
-             [Header] -> RequestMethod -> Text -> a -> s (Response ByteString)
+             [Header] -> RequestMethod -> Text -> a -> s (Request ByteString)
 mkRequest headers method wdPath args = do
   uri <- mkWDUri (T.unpack wdPath)
   let body = case toJSON args of
         Null  -> ""   --passing Null as the argument indicates no request body
         other -> encode other
-      req = Request { rqURI = uri             --todo: normalization of headers
-                    , rqMethod = method
-                    , rqBody = body
-                    , rqHeaders = headers ++ [ Header HdrAccept
-                                               "application/json;charset=UTF-8"
-                                             , Header HdrContentType
-                                               "application/json;charset=UTF-8"
-                                             , Header HdrContentLength
-                                               . show . LBS.length $ body
-                                             ]
-                    }
+  return Request { rqURI = uri             --todo: normalization of headers
+                 , rqMethod = method
+                 , rqBody = body
+                 , rqHeaders = headers ++ [ Header HdrAccept
+                                            "application/json;charset=UTF-8"
+                                          , Header HdrContentType
+                                            "application/json;charset=UTF-8"
+                                          , Header HdrContentLength
+                                            . show . LBS.length $ body
+                                          ]
+                 }
+
+
+
+sendHTTPRequest :: SessionState s => Request ByteString -> s (Response ByteString) 
+sendHTTPRequest req = do
   r <- liftBase (simpleHTTP req) >>= either (throwIO . HTTPConnError) return
   modifySession $ \s -> s {lastHTTPRequest = Just req} -- update lastHTTPRequest field
   return r
@@ -159,6 +167,7 @@ handleJSONErr WDResponse{rspVal = val, rspStatus = status} = do
     30  -> e IMENotAvailable
     31  -> e IMEEngineActivationFailed
     32  -> e InvalidSelector
+    33  -> e SessionNotCreated
     34  -> e MoveTargetOutOfBounds
     51  -> e InvalidXPathSelector
     52  -> e InvalidXPathSelectorReturnType
@@ -233,6 +242,7 @@ data FailedCommandType = NoSuchElement
                        | IMENotAvailable
                        | IMEEngineActivationFailed
                        | InvalidSelector
+                       | SessionNotCreated
                        | MoveTargetOutOfBounds
                        | InvalidXPathSelector
                        | InvalidXPathSelectorReturnType
@@ -313,7 +323,7 @@ instance FromJSON FailedCommandInfo where
   parseJSON (Object o) =
     FailedCommandInfo <$> (req "message" >>= maybe (return "") return)
                       <*> pure undefined
-                      <*> opt "screen"     Nothing
+                      <*> (fmap TL.encodeUtf8 <$> opt "screen" Nothing)
                       <*> opt "class"      Nothing
                       <*> opt "stackTrace" []
     where req :: FromJSON a => Text -> Parser a

@@ -37,7 +37,7 @@ module Test.WebDriver.Commands
        , focusFrame, FrameSelector(..)
          -- * Cookies
        , Cookie(..), mkCookie
-       , cookies, setCookie, deleteCookie, deleteVisibleCookies
+       , cookies, setCookie, deleteCookie, deleteVisibleCookies, deleteCookieByName
          -- * Alerts
        , getAlertText, replyToAlert, acceptAlert, dismissAlert
          -- * Mouse gestures
@@ -89,6 +89,7 @@ import Data.ByteString.Base64.Lazy as B64
 import Data.ByteString.Lazy as LBS (ByteString)
 import Network.URI hiding (path)  -- suppresses warnings
 import Codec.Archive.Zip
+import qualified Data.Text.Lazy.Encoding as TL
 
 import Control.Applicative
 import Control.Monad.State.Strict
@@ -148,7 +149,7 @@ setImplicitWait ms =
 setScriptTimeout :: WebDriver wd => Integer -> wd ()
 setScriptTimeout ms =
   noReturn $ doSessCommand POST "/timeouts/async_script" (object msField)
-    `L.catch` \(_ :: SomeException) ->
+    `L.catch` \( _ :: SomeException) ->
       doSessCommand POST "/timeouts" (object allFields)
   where msField   = ["ms" .= ms]
         allFields = ["type" .= ("script" :: String)] ++ msField
@@ -217,11 +218,12 @@ returned as the result of asyncJS. A result of Nothing indicates that the
 Javascript function timed out (see 'setScriptTimeout')
 -}
 asyncJS :: (WebDriver wd, FromJSON a) => [JSArg] -> Text -> wd (Maybe a)
-asyncJS a s = handle timeout $ fromJSON' =<< getResult
+asyncJS a s = handle timeout $ Just <$> (fromJSON' =<< getResult)
   where
     getResult = doSessCommand POST "/execute_async" . pair ("args", "script")
                 $ (a,s)
-    timeout (FailedCommand Timeout _) = return Nothing
+    timeout (FailedCommand Timeout _)       = return Nothing
+    timeout (FailedCommand ScriptTimeout _) = return Nothing
     timeout err = throwIO err
 
 -- |Grab a screenshot of the current page as a PNG image
@@ -230,7 +232,7 @@ screenshot = B64.decodeLenient <$> screenshotBase64
 
 -- |Grab a screenshot as a base-64 encoded PNG image. This is the protocol-defined format.
 screenshotBase64 :: WebDriver wd => wd LBS.ByteString
-screenshotBase64 = doSessCommand GET "/screenshot" Null
+screenshotBase64 = TL.encodeUtf8 <$> doSessCommand GET "/screenshot" Null
 
 availableIMEEngines :: WebDriver wd => wd [Text]
 availableIMEEngines = doSessCommand GET "/ime/available_engines" Null
@@ -365,8 +367,10 @@ setCookie = noReturn . doSessCommand POST "/cookie" . single "cookie"
 -- |Delete a cookie. This will do nothing is the cookie isn't visible to the
 -- current page.
 deleteCookie :: WebDriver wd => Cookie -> wd ()
-deleteCookie c = 
-  noReturn $ doSessCommand DELETE ("/cookie/" `append` urlEncode (cookName c)) Null
+deleteCookie c = noReturn $ doSessCommand DELETE ("/cookie/" `append` urlEncode (cookName c)) Null
+
+deleteCookieByName :: WebDriver wd => Text -> wd ()
+deleteCookieByName n = noReturn $ doSessCommand DELETE ("/cookie/" `append` n) Null
 
 -- |Delete all visible cookies on the current page.
 deleteVisibleCookies :: WebDriver wd => wd ()
@@ -692,7 +696,7 @@ uploadRawFile path t str = uploadZipEntry (toEntry path t str)
 -- the zip entry sent across network.
 uploadZipEntry :: WebDriver wd => Entry -> wd ()
 uploadZipEntry = noReturn . doSessCommand POST "/file" . single "file"
-                 . B64.encode . fromArchive . (`addEntryToArchive` emptyArchive)
+                 . TL.decodeUtf8 . B64.encode . fromArchive . (`addEntryToArchive` emptyArchive)
 
 
 -- |Get the current number of keys in a web storage area.

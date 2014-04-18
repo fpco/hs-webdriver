@@ -1,6 +1,25 @@
 #Change Log
 
-##upcoming version
+##0.5.3.2
+###bug fixes
+* fixed remaining compilation problems with aeson. now supports aeson >= 0.6.2.0 && < 0.8
+* now depends on directory-tree instead of filesystem-trees. this fixes several problems with firefox/chrome profile support.
+
+##0.5.3.1
+###bug fixes
+* fixed compilation error with aeson 0.7 and greater
+
+##0.5.3
+
+###new features
+* SessionNotCreated constructor added to FailedCommandType
+* new command deleteCookieByName added
+
+###bug fixes
+* asyncJS now properly distinguishes between a null return and a script timeout
+* fixed a change in waitWhile causing the opposite of expected behavior
+
+##0.5.2
 ###API changes
 * added many new Internet Explorer capabilities
 * added additionalCaps to Capabilities, which allows support for non-standard capabilities
@@ -12,8 +31,10 @@
 * error reporting for unknown commands now slightly improved
 
 ###bug fixes
-* internal request URLs are now properly percent-encoded
-* improved handling of browser-specific capabilities 
+* internal request URIs are now properly percent-encoded
+* improved handling of browser-specific capabilities
+* fixed incompatability with new session creation protocol changes introduced in selenium 2.35
+* updated to work with Aeson 0.6.2 and onward
 
 ##hs-webdriver 0.5.1
 ###API changes
